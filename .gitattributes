@@ -1,0 +1,19 @@
+# Автоматическая обработка окончаний строк
+* text=auto
+
+# Исключить бинарные файлы
+*.pkl binary
+*.whl binary
+*.db binary
+*.sqlite binary
+
+# Python файлы
+*.py text eol=lf
+
+# Конфигурационные файлы
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+

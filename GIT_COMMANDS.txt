@@ -1,0 +1,22 @@
+# Команды для первого коммита в GitHub
+
+# 1. Инициализация (если Git еще не инициализирован)
+git init
+
+# 2. Добавление удаленного репозитория
+git remote add origin <your-github-repo-url>
+
+# 3. Проверка перед коммитом
+./CHECK_BEFORE_COMMIT.sh
+
+# 4. Добавление файлов
+git add .
+
+# 5. Проверка что будет закоммичено
+git status
+
+# 6. Создание коммита
+git commit -m "Initial commit: Parser for Avito and Kufar with Telegram bots"
+
+# 7. Отправка в GitHub
+git push -u origin main
