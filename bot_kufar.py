@@ -76,7 +76,7 @@ class KufarTelegramBot:
 """
         
         if is_admin:
-            welcome_text += "\n🔧 Админ команды:\n/sql - Выполнить SQL запрос"
+            welcome_text += "\n🔧 Админ команды:\n/refresh - Обновить цены\n/parser_status - Статус парсера\n/analytics - Аналитика\n/sql - SQL запросы"
         
         await update.message.reply_text(welcome_text)
 
@@ -288,7 +288,7 @@ class KufarTelegramBot:
 /help - Помощь
 """
                 if self.db.is_admin(user_id):
-                    welcome_text += "\n🔧 Админ команды:\n/sql - SQL запросы\n/analytics - Аналитика"
+                    welcome_text += "\n🔧 Админ команды:\n/refresh - Обновить цены\n/parser_status - Статус парсера\n/analytics - Аналитика\n/sql - SQL запросы"
                 await update.message.reply_text(welcome_text)
             else:
                 await update.message.reply_text("❌ Никнейм не может быть пустым. Введите свой ник:")
