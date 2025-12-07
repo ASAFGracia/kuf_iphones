@@ -6,7 +6,9 @@ from telegram.ext import (
     MessageHandler, ContextTypes, filters
 )
 from database import Database
-from config import KUFAR_CITIES, IPHONE_MODELS, ADMIN_USER_ID
+from config.app_settings import ADMIN_USER_ID
+from config.cities import KUFAR_CITIES
+from config.models import IPHONE_MODELS
 from typing import Dict
 
 logger = get_logger('kufar_bot')
@@ -439,13 +441,19 @@ class KufarTelegramBot:
                     if isinstance(created_at, datetime):
                         date_str = f"\n📅 Дата: {created_at.strftime('%d.%m.%Y %H:%M')}"
             
+            # Конвертируем в рубли для удобства
+            from utils.currency_converter import convert_byn_to_rub
+            price_rub = convert_byn_to_rub(price)
+            median_price_rub = convert_byn_to_rub(median_price)
+            price_difference_rub = convert_byn_to_rub(price_difference)
+            
             message = f"""
 🎯 Найдено выгодное предложение на Kufar!
 
 📱 Модель: {ad_data['model']}
-💰 Цена: {price:,} BYN
-📊 Медианная цена: {median_price:,.0f} BYN
-💵 Экономия: {price_difference:,.0f} BYN ({discount_percent:.1f}%)
+💰 Цена: {price:,} BYN (~{price_rub:,.0f} ₽)
+📊 Медианная цена: {median_price:,.0f} BYN (~{median_price_rub:,.0f} ₽)
+💵 Экономия: {price_difference:,.0f} BYN (~{price_difference_rub:,.0f} ₽) ({discount_percent:.1f}%)
 
 🏙 Город: {ad_data['city']}
 💾 Память: {ad_data.get('memory', 'не указана')}{date_str}
@@ -483,6 +491,8 @@ class KufarTelegramBot:
         application.add_handler(CommandHandler("stopsql", self.stopsql_command))
         application.add_handler(CommandHandler("analytics", self.analytics_command))
         application.add_handler(CommandHandler("profile", self.profile_command))
+        application.add_handler(CommandHandler("refresh", self.refresh_command))
+        application.add_handler(CommandHandler("parser_status", self.parser_status_command))
         application.add_handler(CallbackQueryHandler(self.button_callback))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
         

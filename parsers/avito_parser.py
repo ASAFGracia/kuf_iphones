@@ -17,7 +17,8 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils.logger import get_logger
-from parsers.selectors import AVITO_SELECTORS, AVITO_URL_PATTERNS
+from config.parsers.selectors import AVITO_SELECTORS, AVITO_URL_PATTERNS
+from config.parsers.settings import PARSING_PAGES_COUNT, REQUEST_DELAY
 from parsers.model_extractor import extract_iphone_model, extract_memory
 
 logger = get_logger('avito_parser')
@@ -132,9 +133,11 @@ class AvitoParser:
         
         return None
 
-    def parse_avito(self, city: str, model: str = None, max_price: int = None, pages: int = 10) -> List[Dict]:
+    def parse_avito(self, city: str, model: str = None, max_price: int = None, pages: int = None) -> List[Dict]:
         """Парсить объявления с Avito (с пагинацией)"""
-        ads = []
+        if pages is None:
+            pages = PARSING_PAGES_COUNT
+        
         all_ads = []
         
         try:
@@ -151,7 +154,7 @@ class AvitoParser:
                     }
                     
                     url = f"{base_url}{search_path}?{urlencode(params)}"
-                    logger.info(f"Парсинг Avito URL (страница {page}): {url}")
+                    logger.info(f"Парсинг Avito URL (страница {page}/{pages}): {url}")
                     
                     response = self._get_page(url)
                     if not response:
@@ -161,14 +164,13 @@ class AvitoParser:
                     page_ads = self._parse_avito_page(response, base_url, model, max_price)
                     if page_ads:
                         all_ads.extend(page_ads)
-                        logger.info(f"Найдено {len(page_ads)} объявлений на странице {page}")
+                        logger.info(f"Найдено {len(page_ads)} объявлений на странице {page} (всего: {len(all_ads)})")
                     else:
-                        logger.info(f"На странице {page} объявлений не найдено, прекращаем парсинг")
-                        break  # Если на странице нет объявлений, прекращаем
+                        logger.info(f"На странице {page} объявлений не найдено")
+                        # Не прекращаем сразу, возможно на следующей странице будут объявления
                     
-                    # Небольшая задержка между запросами
-                    import time
-                    time.sleep(1)
+                    # Задержка между запросами
+                    time.sleep(REQUEST_DELAY)
                     
                 except Exception as e:
                     logger.error(f"Ошибка при парсинге страницы {page}: {e}")

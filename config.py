@@ -16,9 +16,9 @@ DB_CONFIG = {
     'password': os.getenv('DB_PASSWORD')
 }
 
-# Parser Settings
-PARSING_INTERVAL_MINUTES = int(os.getenv('PARSING_INTERVAL_MINUTES', 2))  # Парсинг каждые 2 минуты
-PARSING_PAGES_COUNT = int(os.getenv('PARSING_PAGES_COUNT', 10))  # Количество страниц для парсинга
+# Parser Settings (для обратной совместимости - используйте config.app_settings и config.parsers.settings)
+PARSING_INTERVAL_MINUTES = int(os.getenv('PARSING_INTERVAL_MINUTES', 3))  # Парсинг каждые 3 минуты
+PARSING_PAGES_COUNT = int(os.getenv('PARSING_PAGES_COUNT', 20))  # Количество страниц для парсинга
 
 # Admin Settings
 ADMIN_USER_ID = int(os.getenv('ADMIN_USER_ID', 8507895419))  # ID администратора

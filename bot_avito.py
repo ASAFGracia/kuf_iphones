@@ -6,7 +6,9 @@ from telegram.ext import (
     MessageHandler, ContextTypes, filters
 )
 from database import Database
-from config import CITIES, IPHONE_MODELS, ADMIN_USER_ID
+from config.app_settings import ADMIN_USER_ID
+from config.cities import AVITO_CITIES
+from config.models import IPHONE_MODELS
 from typing import Dict
 
 logger = get_logger('avito_bot')
@@ -103,7 +105,7 @@ class AvitoTelegramBot:
     async def city_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Обработчик команды /city"""
         keyboard = []
-        cities_list = list(CITIES.items())
+        cities_list = list(AVITO_CITIES.items())
         
         for i in range(0, len(cities_list), 2):
             row = []
@@ -210,7 +212,7 @@ class AvitoTelegramBot:
         
         if data.startswith('city_'):
             city_code = data.replace('city_', '')
-            city_name = [name for name, code in CITIES.items() if code == city_code][0]
+            city_name = [name for name, code in AVITO_CITIES.items() if code == city_code][0]
             self.db.update_user_settings(user_id, city=city_name)
             await query.edit_message_text(f"✅ Город выбран: {city_name}")
             self.db.add_log(user_id, f'city_selected_{city_name}', None, command='button', source='avito')
@@ -467,6 +469,96 @@ class AvitoTelegramBot:
         except Exception as e:
             await update.message.reply_text(f"❌ Ошибка получения профиля: {str(e)}")
             logger.error(f"Ошибка получения профиля: {e}")
+    
+    async def refresh_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик команды /refresh - пересчет медианных цен (только для админа)"""
+        user_id = update.effective_user.id
+        
+        if not self.db.is_admin(user_id):
+            await update.message.reply_text("❌ У вас нет доступа к этой команде")
+            self.db.add_log(user_id, 'refresh_denied', None, command='/refresh', source='avito')
+            return
+        
+        try:
+            await update.message.reply_text("🔄 Начинаю пересчет медианных цен...")
+            self.db.add_log(user_id, 'refresh_started', None, command='/refresh', source='avito')
+            
+            # Импортируем MedianPriceCalculator
+            from utils.median_calculator import MedianPriceCalculator
+            calculator = MedianPriceCalculator(self.db)
+            
+            # Пересчитываем для обоих источников
+            avito_count = calculator.recalculate_all_medians('avito')
+            kufar_count = calculator.recalculate_all_medians('kufar')
+            
+            await update.message.reply_text(
+                f"✅ Пересчет завершен!\n\n"
+                f"• Avito: обновлено {avito_count} записей\n"
+                f"• Kufar: обновлено {kufar_count} записей"
+            )
+            self.db.add_log(user_id, 'refresh_completed', None, command='/refresh', source='avito')
+            
+        except Exception as e:
+            await update.message.reply_text(f"❌ Ошибка пересчета: {str(e)}")
+            logger.error(f"Ошибка пересчета медианных цен: {e}")
+            self.db.add_log(user_id, 'refresh_error', str(e), command='/refresh', source='avito')
+    
+    async def parser_status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработчик команды /parser_status - статус парсера (только для админа)"""
+        user_id = update.effective_user.id
+        
+        if not self.db.is_admin(user_id):
+            await update.message.reply_text("❌ У вас нет доступа к этой команде")
+            self.db.add_log(user_id, 'parser_status_denied', None, command='/parser_status', source='avito')
+            return
+        
+        try:
+            # Получаем последние логи парсинга
+            avito_stats = self.db.get_parsing_stats('avito', limit=5)
+            kufar_stats = self.db.get_parsing_stats('kufar', limit=5)
+            
+            status_text = "📊 Статус парсера\n\n"
+            
+            # Статистика Avito
+            if avito_stats:
+                latest = avito_stats[0]
+                status_text += f"🔵 Avito (последний запуск):\n"
+                status_text += f"• Статус: {'✅ Успешно' if latest['status'] == 'completed' else '❌ Ошибка'}\n"
+                status_text += f"• Город: {latest.get('city', 'N/A')}\n"
+                status_text += f"• Модель: {latest.get('model', 'N/A')}\n"
+                status_text += f"• Страниц: {latest.get('pages_parsed', 0)}\n"
+                status_text += f"• Найдено: {latest.get('ads_found', 0)}\n"
+                status_text += f"• Обработано: {latest.get('ads_processed', 0)}\n"
+                status_text += f"• Отправлено: {latest.get('ads_sent', 0)}\n"
+                status_text += f"• Ошибок: {latest.get('errors_count', 0)}\n"
+                status_text += f"• Время: {latest.get('duration_seconds', 0):.1f}с\n"
+                status_text += f"• Дата: {latest.get('created_at', 'N/A')}\n\n"
+            else:
+                status_text += "🔵 Avito: нет данных\n\n"
+            
+            # Статистика Kufar
+            if kufar_stats:
+                latest = kufar_stats[0]
+                status_text += f"🟢 Kufar (последний запуск):\n"
+                status_text += f"• Статус: {'✅ Успешно' if latest['status'] == 'completed' else '❌ Ошибка'}\n"
+                status_text += f"• Город: {latest.get('city', 'N/A')}\n"
+                status_text += f"• Модель: {latest.get('model', 'N/A')}\n"
+                status_text += f"• Страниц: {latest.get('pages_parsed', 0)}\n"
+                status_text += f"• Найдено: {latest.get('ads_found', 0)}\n"
+                status_text += f"• Обработано: {latest.get('ads_processed', 0)}\n"
+                status_text += f"• Отправлено: {latest.get('ads_sent', 0)}\n"
+                status_text += f"• Ошибок: {latest.get('errors_count', 0)}\n"
+                status_text += f"• Время: {latest.get('duration_seconds', 0):.1f}с\n"
+                status_text += f"• Дата: {latest.get('created_at', 'N/A')}\n"
+            else:
+                status_text += "🟢 Kufar: нет данных\n"
+            
+            await update.message.reply_text(status_text)
+            self.db.add_log(user_id, 'parser_status_viewed', None, command='/parser_status', source='avito')
+            
+        except Exception as e:
+            await update.message.reply_text(f"❌ Ошибка получения статуса: {str(e)}")
+            logger.error(f"Ошибка получения статуса парсера: {e}")
 
     async def send_advertisement(self, user_id: int, ad_data: Dict):
         """Отправить объявление пользователю"""
@@ -487,13 +579,19 @@ class AvitoTelegramBot:
                     if isinstance(created_at, datetime):
                         date_str = f"\n📅 Дата: {created_at.strftime('%d.%m.%Y %H:%M')}"
             
+            # Конвертируем в BYN для удобства
+            from utils.currency_converter import convert_rub_to_byn
+            price_byn = convert_rub_to_byn(price)
+            median_price_byn = convert_rub_to_byn(median_price)
+            price_difference_byn = convert_rub_to_byn(price_difference)
+            
             message = f"""
 🎯 Найдено выгодное предложение на Avito!
 
 📱 Модель: {ad_data['model']}
-💰 Цена: {price:,} руб.
-📊 Медианная цена: {median_price:,.0f} руб.
-💵 Экономия: {price_difference:,.0f} руб. ({discount_percent:.1f}%)
+💰 Цена: {price:,} ₽ (~{price_byn:,.0f} BYN)
+📊 Медианная цена: {median_price:,.0f} ₽ (~{median_price_byn:,.0f} BYN)
+💵 Экономия: {price_difference:,.0f} ₽ (~{price_difference_byn:,.0f} BYN) ({discount_percent:.1f}%)
 
 🏙 Город: {ad_data['city']}
 💾 Память: {ad_data.get('memory', 'не указана')}{date_str}
@@ -531,6 +629,8 @@ class AvitoTelegramBot:
         application.add_handler(CommandHandler("stopsql", self.stopsql_command))
         application.add_handler(CommandHandler("analytics", self.analytics_command))
         application.add_handler(CommandHandler("profile", self.profile_command))
+        application.add_handler(CommandHandler("refresh", self.refresh_command))
+        application.add_handler(CommandHandler("parser_status", self.parser_status_command))
         application.add_handler(CallbackQueryHandler(self.button_callback))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
         

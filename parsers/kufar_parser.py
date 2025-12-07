@@ -16,7 +16,8 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils.logger import get_logger
-from parsers.selectors import KUFAR_SELECTORS, KUFAR_URL_PATTERNS
+from config.parsers.selectors import KUFAR_SELECTORS, KUFAR_URL_PATTERNS
+from config.parsers.settings import PARSING_PAGES_COUNT, REQUEST_DELAY
 from parsers.model_extractor import extract_iphone_model, extract_memory
 
 logger = get_logger('kufar_parser')
@@ -133,60 +134,101 @@ class KufarParser:
         
         return None
 
-    def parse_kufar(self, city: str, model: str = None, max_price: int = None, pages: int = 10) -> List[Dict]:
-        """Парсить объявления с Kufar (с пагинацией)"""
-        ads = []
+    def parse_kufar(self, city: str, model: str = None, max_price: int = None, pages: int = None) -> List[Dict]:
+        """Парсить объявления с Kufar (с пагинацией через кнопку следующей страницы)"""
+        if pages is None:
+            pages = PARSING_PAGES_COUNT
+        
         all_ads = []
         
         try:
             # Формируем URL для поиска
-            city_codes = {
-                'Минск': 'minsk',
-                'Витебск': 'vitebsk'
-            }
-            
-            city_code = city_codes.get(city)
+            from config.cities import KUFAR_CITIES
+            city_code = KUFAR_CITIES.get(city)
             if not city_code:
                 logger.error(f"Город {city} не поддерживается")
-                return ads
+                return all_ads
             
             base_url = KUFAR_URL_PATTERNS['base']
             search_path = KUFAR_URL_PATTERNS['search'].format(city=city_code)
             params = KUFAR_URL_PATTERNS['params']
             
-            # Парсим несколько последних страниц
-            for page in range(1, pages + 1):
+            # Начинаем с первой страницы
+            current_url = f"{base_url}{search_path}?sort={params['sort']}"
+            page_num = 1
+            
+            # Парсим страницы пока не достигнем лимита или не закончатся страницы
+            while page_num <= pages:
                 try:
-                    url = f"{base_url}{search_path}?sort={params['sort']}&cursor={page}"
-                    logger.info(f"Парсинг Kufar URL (страница {page}): {url}")
+                    logger.info(f"Парсинг Kufar URL (страница {page_num}): {current_url}")
                     
-                    response = self._get_page(url)
+                    response = self._get_page(current_url)
                     if not response:
-                        logger.warning(f"Не удалось получить страницу {page} Kufar")
-                        continue
+                        logger.warning(f"Не удалось получить страницу {page_num} Kufar")
+                        break
                     
                     page_ads = self._parse_kufar_page(response, base_url, city, model, max_price)
                     if page_ads:
                         all_ads.extend(page_ads)
-                        logger.info(f"Найдено {len(page_ads)} объявлений на странице {page}")
+                        logger.info(f"Найдено {len(page_ads)} объявлений на странице {page_num} (всего: {len(all_ads)})")
                     else:
-                        logger.info(f"На странице {page} объявлений не найдено, прекращаем парсинг")
-                        break  # Если на странице нет объявлений, прекращаем
+                        logger.info(f"На странице {page_num} объявлений не найдено")
                     
-                    # Небольшая задержка между запросами
-                    import time
-                    time.sleep(1)
+                    # Ищем кнопку "следующая страница"
+                    next_url = self._find_next_page_url(response)
+                    if not next_url:
+                        logger.info(f"Кнопка следующей страницы не найдена, парсинг завершен")
+                        break
+                    
+                    # Формируем полный URL следующей страницы
+                    if not next_url.startswith('http'):
+                        next_url = f"{base_url}{next_url}"
+                    
+                    current_url = next_url
+                    page_num += 1
+                    
+                    # Задержка между запросами
+                    time.sleep(REQUEST_DELAY)
                     
                 except Exception as e:
-                    logger.error(f"Ошибка при парсинге страницы {page}: {e}")
-                    continue
+                    logger.error(f"Ошибка при парсинге страницы {page_num}: {e}")
+                    break
             
-            logger.info(f"Всего найдено {len(all_ads)} объявлений на {pages} страницах Kufar")
+            logger.info(f"Всего найдено {len(all_ads)} объявлений на {page_num} страницах Kufar")
             return all_ads
             
         except Exception as e:
             logger.error(f"Ошибка парсинга Kufar: {e}", exc_info=True)
             return all_ads
+    
+    def _find_next_page_url(self, response) -> Optional[str]:
+        """Найти URL следующей страницы через кнопку пагинации"""
+        try:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Ищем кнопку пагинации с классами styles_link__8m3I9 styles_arrow__LNoLG
+            pagination_buttons = soup.find_all('a', class_=re.compile(r'styles_link__8m3I9.*styles_arrow__LNoLG'))
+            
+            if not pagination_buttons:
+                # Пробуем найти любую кнопку с этими классами отдельно
+                for btn in soup.find_all('a'):
+                    classes = btn.get('class', [])
+                    if 'styles_link__8m3I9' in classes and 'styles_arrow__LNoLG' in classes:
+                        href = btn.get('href')
+                        if href:
+                            return href
+            
+            # Если нашли кнопки, берем первую (обычно это "следующая")
+            if pagination_buttons:
+                href = pagination_buttons[0].get('href')
+                if href:
+                    return href
+            
+            return None
+        except Exception as e:
+            logger.debug(f"Ошибка поиска следующей страницы: {e}")
+            return None
     
     def _parse_kufar_page(self, response, base_url: str, city: str, model: str = None, max_price: int = None) -> List[Dict]:
         """Парсить одну страницу Kufar"""

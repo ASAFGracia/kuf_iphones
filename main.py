@@ -41,6 +41,12 @@ async def main():
         median_calculator = MedianPriceCalculator(db)
         logger.info("Калькулятор медианных цен инициализирован")
         
+        # Обновляем курсы валют
+        logger.info("Обновление курсов валют...")
+        from utils.currency_converter import update_currency_rates
+        update_currency_rates()
+        logger.info("Курсы валют обновлены")
+        
         # Инициализируем ботов
         logger.info("Инициализация Telegram ботов...")
         avito_bot = AvitoTelegramBot(TELEGRAM_AVITO_BOT_TOKEN, db)

@@ -16,7 +16,10 @@ from bot_avito import AvitoTelegramBot
 from bot_kufar import KufarTelegramBot
 from utils.median_calculator import MedianPriceCalculator
 from utils.logger import get_logger
-from config import CITIES, KUFAR_CITIES, PARSING_INTERVAL_MINUTES, PARSING_PAGES_COUNT
+from config.app_settings import PARSING_INTERVAL_MINUTES
+from config.parsers.settings import PARSING_PAGES_COUNT
+from config.cities import AVITO_CITIES, KUFAR_CITIES
+import time
 
 logger = get_logger('parser_service')
 
@@ -167,6 +170,15 @@ class ParserService:
 
     async def parse_for_user_avito(self, user_settings: dict):
         """Парсить объявления Avito для конкретного пользователя"""
+        start_time = time.time()
+        pages_parsed = 0
+        ads_found = 0
+        ads_processed = 0
+        ads_sent = 0
+        errors_count = 0
+        status = 'completed'
+        error_message = None
+        
         try:
             city = user_settings.get('city')
             model = user_settings.get('model')
@@ -176,32 +188,66 @@ class ParserService:
                 logger.warning(f"Пользователь {user_settings['user_id']} не выбрал город")
                 return
             
-            city_code = CITIES.get(city)
+            city_code = AVITO_CITIES.get(city)
             if not city_code:
                 logger.warning(f"Город {city} не найден в списке Avito")
                 return
             
             logger.info(f"Парсинг Avito для пользователя {user_settings['user_id']}: {city}, {model or 'все модели'}, max_price={max_price or 'не ограничена'}")
             
-            # Парсим объявления (используем прямой URL к категории Apple)
+            # Парсим объявления
             ads = self.avito_parser.parse_avito(city_code, model, max_price, pages=PARSING_PAGES_COUNT)
+            ads_found = len(ads)
+            pages_parsed = PARSING_PAGES_COUNT
             
             logger.info(f"Найдено {len(ads)} объявлений Avito для пользователя {user_settings['user_id']}")
             
             # Обрабатываем каждое объявление
-            processed_count = 0
             for ad in ads:
-                if await self.process_advertisement(ad, user_settings, 'avito'):
-                    processed_count += 1
-                await asyncio.sleep(0.5)
+                try:
+                    if await self.process_advertisement(ad, user_settings, 'avito'):
+                        ads_sent += 1
+                    ads_processed += 1
+                    await asyncio.sleep(0.5)
+                except Exception as e:
+                    errors_count += 1
+                    logger.error(f"Ошибка обработки объявления: {e}")
             
-            logger.info(f"Обработано {processed_count} выгодных объявлений Avito для пользователя {user_settings['user_id']}")
+            logger.info(f"Обработано {ads_processed} объявлений, отправлено {ads_sent} выгодных Avito для пользователя {user_settings['user_id']}")
                 
         except Exception as e:
+            errors_count += 1
+            status = 'error'
+            error_message = str(e)
             logger.error(f"Ошибка парсинга Avito для пользователя {user_settings['user_id']}: {e}", exc_info=True)
+        finally:
+            # Логируем результат парсинга
+            duration = time.time() - start_time
+            self.db.add_parsing_log(
+                source='avito',
+                city=user_settings.get('city'),
+                model=user_settings.get('model'),
+                pages_parsed=pages_parsed,
+                ads_found=ads_found,
+                ads_processed=ads_processed,
+                ads_sent=ads_sent,
+                errors_count=errors_count,
+                duration_seconds=round(duration, 2),
+                status=status,
+                error_message=error_message
+            )
 
     async def parse_for_user_kufar(self, user_settings: dict):
         """Парсить объявления Kufar для конкретного пользователя"""
+        start_time = time.time()
+        pages_parsed = 0
+        ads_found = 0
+        ads_processed = 0
+        ads_sent = 0
+        errors_count = 0
+        status = 'completed'
+        error_message = None
+        
         try:
             city = user_settings.get('city')
             model = user_settings.get('model')
@@ -219,20 +265,45 @@ class ParserService:
             
             # Парсим объявления (последние N страниц)
             ads = self.kufar_parser.parse_kufar(city, model, max_price, pages=PARSING_PAGES_COUNT)
+            ads_found = len(ads)
+            pages_parsed = PARSING_PAGES_COUNT
             
             logger.info(f"Найдено {len(ads)} объявлений Kufar для пользователя {user_settings['user_id']}")
             
             # Обрабатываем каждое объявление
-            processed_count = 0
             for ad in ads:
-                if await self.process_advertisement(ad, user_settings, 'kufar'):
-                    processed_count += 1
-                await asyncio.sleep(0.5)
+                try:
+                    if await self.process_advertisement(ad, user_settings, 'kufar'):
+                        ads_sent += 1
+                    ads_processed += 1
+                    await asyncio.sleep(0.5)
+                except Exception as e:
+                    errors_count += 1
+                    logger.error(f"Ошибка обработки объявления: {e}")
             
-            logger.info(f"Обработано {processed_count} выгодных объявлений Kufar для пользователя {user_settings['user_id']}")
+            logger.info(f"Обработано {ads_processed} объявлений, отправлено {ads_sent} выгодных Kufar для пользователя {user_settings['user_id']}")
                 
         except Exception as e:
+            errors_count += 1
+            status = 'error'
+            error_message = str(e)
             logger.error(f"Ошибка парсинга Kufar для пользователя {user_settings['user_id']}: {e}", exc_info=True)
+        finally:
+            # Логируем результат парсинга
+            duration = time.time() - start_time
+            self.db.add_parsing_log(
+                source='kufar',
+                city=user_settings.get('city'),
+                model=user_settings.get('model'),
+                pages_parsed=pages_parsed,
+                ads_found=ads_found,
+                ads_processed=ads_processed,
+                ads_sent=ads_sent,
+                errors_count=errors_count,
+                duration_seconds=round(duration, 2),
+                status=status,
+                error_message=error_message
+            )
 
     async def run_parsing_cycle(self):
         """Запустить цикл парсинга"""

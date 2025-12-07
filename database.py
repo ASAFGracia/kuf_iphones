@@ -82,6 +82,31 @@ class Database:
                     )
                 """)
                 
+                # Таблица логов парсинга
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS parsing_logs (
+                        id SERIAL PRIMARY KEY,
+                        source VARCHAR(20) NOT NULL CHECK (source IN ('avito', 'kufar')),
+                        city VARCHAR(100),
+                        model VARCHAR(100),
+                        pages_parsed INTEGER DEFAULT 0,
+                        ads_found INTEGER DEFAULT 0,
+                        ads_processed INTEGER DEFAULT 0,
+                        ads_sent INTEGER DEFAULT 0,
+                        errors_count INTEGER DEFAULT 0,
+                        duration_seconds DECIMAL(10, 2),
+                        status VARCHAR(50) DEFAULT 'completed',
+                        error_message TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                # Индекс для быстрого поиска
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_parsing_logs_source_created 
+                    ON parsing_logs(source, created_at DESC)
+                """)
+                
                 # Миграция: добавляем колонки command и source если их нет
                 try:
                     cur.execute("""
@@ -112,6 +137,8 @@ class Database:
                         kufar_id VARCHAR(100),
                         source VARCHAR(20) NOT NULL CHECK (source IN ('avito', 'kufar')),
                         price INTEGER NOT NULL,
+                        price_rub DECIMAL(10, 2),
+                        price_byn DECIMAL(10, 2),
                         model VARCHAR(100) NOT NULL,
                         city VARCHAR(100) NOT NULL,
                         memory VARCHAR(50),
@@ -125,6 +152,28 @@ class Database:
                         UNIQUE(kufar_id, source)
                     )
                 """)
+                
+                # Миграция: добавляем колонки для валют если их нет
+                try:
+                    cur.execute("""
+                        DO $$ 
+                        BEGIN 
+                            IF NOT EXISTS (
+                                SELECT 1 FROM information_schema.columns 
+                                WHERE table_name='advertisements' AND column_name='price_rub'
+                            ) THEN
+                                ALTER TABLE advertisements ADD COLUMN price_rub DECIMAL(10, 2);
+                            END IF;
+                            IF NOT EXISTS (
+                                SELECT 1 FROM information_schema.columns 
+                                WHERE table_name='advertisements' AND column_name='price_byn'
+                            ) THEN
+                                ALTER TABLE advertisements ADD COLUMN price_byn DECIMAL(10, 2);
+                            END IF;
+                        END $$;
+                    """)
+                except Exception as e:
+                    logger.warning(f"Не удалось добавить колонки валют в advertisements: {e}")
 
                 # Индексы для быстрого поиска
                 cur.execute("""
@@ -407,6 +456,49 @@ class Database:
         except Exception as e:
             logger.error(f"Ошибка получения профиля: {e}")
             return None
+    
+    def add_parsing_log(self, source: str, city: str = None, model: str = None,
+                       pages_parsed: int = 0, ads_found: int = 0, ads_processed: int = 0,
+                       ads_sent: int = 0, errors_count: int = 0, duration_seconds: float = 0,
+                       status: str = 'completed', error_message: str = None):
+        """Добавить лог парсинга"""
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO parsing_logs 
+                    (source, city, model, pages_parsed, ads_found, ads_processed, ads_sent, 
+                     errors_count, duration_seconds, status, error_message)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (source, city, model, pages_parsed, ads_found, ads_processed, ads_sent,
+                      errors_count, duration_seconds, status, error_message))
+                self.conn.commit()
+                return True
+        except Exception as e:
+            self.conn.rollback()
+            logger.error(f"Ошибка добавления лога парсинга: {e}")
+            return False
+    
+    def get_parsing_stats(self, source: str = None, limit: int = 10) -> List[Dict]:
+        """Получить статистику парсинга"""
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                if source:
+                    cur.execute("""
+                        SELECT * FROM parsing_logs 
+                        WHERE source = %s 
+                        ORDER BY created_at DESC 
+                        LIMIT %s
+                    """, (source, limit))
+                else:
+                    cur.execute("""
+                        SELECT * FROM parsing_logs 
+                        ORDER BY created_at DESC 
+                        LIMIT %s
+                    """, (limit,))
+                return [dict(row) for row in cur.fetchall()]
+        except Exception as e:
+            logger.error(f"Ошибка получения статистики парсинга: {e}")
+            return []
 
     def update_user_settings(self, user_id: int, city: str = None, 
                             model: str = None, max_price: int = None, 
@@ -485,31 +577,45 @@ class Database:
                          notified: bool = False):
         """Добавить объявление в базу данных"""
         try:
+            # Конвертируем валюты
+            from utils.currency_converter import convert_byn_to_rub, convert_rub_to_byn
+            
+            if source == 'avito':
+                price_rub = float(price)
+                price_byn = convert_rub_to_byn(price)
+            else:  # kufar
+                price_byn = float(price)
+                price_rub = convert_byn_to_rub(price)
+            
             with self.conn.cursor() as cur:
                 if source == 'avito':
                     cur.execute("""
                         INSERT INTO advertisements 
-                        (avito_id, source, price, model, city, memory, url, median_price, price_difference, notified)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        (avito_id, source, price, price_rub, price_byn, model, city, memory, url, median_price, price_difference, notified)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (avito_id, source) DO UPDATE SET
                             price = EXCLUDED.price,
+                            price_rub = EXCLUDED.price_rub,
+                            price_byn = EXCLUDED.price_byn,
                             memory = EXCLUDED.memory,
                             median_price = EXCLUDED.median_price,
                             price_difference = EXCLUDED.price_difference,
                             updated_at = CURRENT_TIMESTAMP
-                    """, (ad_id, source, price, model, city, memory, url, median_price, price_difference, notified))
+                    """, (ad_id, source, price, price_rub, price_byn, model, city, memory, url, median_price, price_difference, notified))
                 elif source == 'kufar':
                     cur.execute("""
                         INSERT INTO advertisements 
-                        (kufar_id, source, price, model, city, memory, url, median_price, price_difference, notified)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        (kufar_id, source, price, price_rub, price_byn, model, city, memory, url, median_price, price_difference, notified)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (kufar_id, source) DO UPDATE SET
                             price = EXCLUDED.price,
+                            price_rub = EXCLUDED.price_rub,
+                            price_byn = EXCLUDED.price_byn,
                             memory = EXCLUDED.memory,
                             median_price = EXCLUDED.median_price,
                             price_difference = EXCLUDED.price_difference,
                             updated_at = CURRENT_TIMESTAMP
-                    """, (ad_id, source, price, model, city, memory, url, median_price, price_difference, notified))
+                    """, (ad_id, source, price, price_rub, price_byn, model, city, memory, url, median_price, price_difference, notified))
                 self.conn.commit()
                 return True
         except Exception as e:

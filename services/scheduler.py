@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils.median_calculator import MedianPriceCalculator
 from utils.logger import get_logger
+from config.app_settings import MEDIAN_RECALCULATION_INTERVAL_HOURS
 
 logger = get_logger('scheduler')
 
@@ -22,40 +23,47 @@ class SchedulerService:
     def __init__(self, median_calculator: MedianPriceCalculator):
         self.median_calculator = median_calculator
         self.running = False
-        self.last_recalculation_date = None
+        self.last_recalculation_time = None
     
-    async def daily_median_recalculation(self):
-        """Ежедневный пересчет медианных цен"""
+    async def periodic_median_recalculation(self):
+        """Периодический пересчет медианных цен (каждые N часов)"""
         while self.running:
             try:
                 now = datetime.now()
-                current_date = now.date()
                 
-                # Проверяем, нужно ли пересчитывать (если еще не пересчитывали сегодня)
-                if self.last_recalculation_date != current_date:
-                    # Пересчитываем в 3:00 ночи
-                    if now.hour >= 3:
-                        logger.info("Начало ежедневного пересчета медианных цен")
-                        
-                        # Пересчитываем для обоих источников
-                        self.median_calculator.recalculate_all_medians('avito')
-                        self.median_calculator.recalculate_all_medians('kufar')
-                        
-                        self.last_recalculation_date = current_date
-                        logger.info("Ежедневный пересчет медианных цен завершен")
+                # Проверяем, нужно ли пересчитывать
+                should_recalculate = False
+                if self.last_recalculation_time is None:
+                    # Первый запуск - пересчитываем сразу
+                    should_recalculate = True
+                else:
+                    # Проверяем прошло ли достаточно времени
+                    time_diff = (now - self.last_recalculation_time).total_seconds() / 3600
+                    if time_diff >= MEDIAN_RECALCULATION_INTERVAL_HOURS:
+                        should_recalculate = True
                 
-                # Проверяем каждые 6 часов
-                await asyncio.sleep(6 * 60 * 60)
+                if should_recalculate:
+                    logger.info(f"Начало пересчета медианных цен (интервал: {MEDIAN_RECALCULATION_INTERVAL_HOURS} часов)")
+                    
+                    # Пересчитываем для обоих источников
+                    self.median_calculator.recalculate_all_medians('avito')
+                    self.median_calculator.recalculate_all_medians('kufar')
+                    
+                    self.last_recalculation_time = now
+                    logger.info("Пересчет медианных цен завершен")
+                
+                # Проверяем каждые час
+                await asyncio.sleep(60 * 60)
                 
             except Exception as e:
-                logger.error(f"Ошибка в ежедневном пересчете медианных цен: {e}")
+                logger.error(f"Ошибка в пересчете медианных цен: {e}")
                 await asyncio.sleep(60 * 60)  # Ждем час перед повтором
     
     async def start(self):
         """Запустить планировщик"""
         self.running = True
-        logger.info("Планировщик задач запущен")
-        await self.daily_median_recalculation()
+        logger.info(f"Планировщик задач запущен (пересчет каждые {MEDIAN_RECALCULATION_INTERVAL_HOURS} часов)")
+        await self.periodic_median_recalculation()
     
     def stop(self):
         """Остановить планировщик"""
